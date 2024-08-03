@@ -1,0 +1,1 @@
+oci iam region list --output table
