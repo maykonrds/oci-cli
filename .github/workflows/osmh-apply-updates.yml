@@ -3,8 +3,13 @@ name: Apply Updates
 run-name: "Apply Updates in ${{ inputs.tenancy }} for all Windows instances"
 
 on:
-  workflow_dispatch:  
-  
+  workflow_dispatch:
+    inputs:
+      tenancy:
+        description: "Target tenancy name"
+        required: true
+        type: string
+
 # Minimal permissions needed for this workflow
 permissions:
   contents: read
@@ -12,13 +17,14 @@ permissions:
 jobs:
   list-windows-instances:
     runs-on: ubuntu-latest
-    name: Apply Updates in ${{ github.event.inputs.tenancy }} tenancy
+    name: Apply Updates in ${{ inputs.tenancy }} tenancy
+
     env:
-      OCI_CLI_USER: ${OCI_CLI_USER}
-      OCI_CLI_TENANCY: ${OCI_CLI_TENANCY}
-      OCI_CLI_FINGERPRINT: ${OCI_CLI_FINGERPRINT}
-      OCI_CLI_KEY_CONTENT: ${OCI_CLI_KEY_CONTENT}
-      
+      OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+      OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,12 +33,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
-      - name: Set up OCI CLI
+
+      - name: Install OCI CLI
+        run: |
+          curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh > install.sh
+          bash install.sh --accept-all-defaults
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Set up OCI CLI config
         run: |
           mkdir -p ~/.oci
           echo "${OCI_CLI_KEY_CONTENT}" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/oci_api_key.pem
-          
+
           cat > ~/.oci/config <<EOF
           [DEFAULT]
           user=${OCI_CLI_USER}
@@ -41,20 +54,41 @@ jobs:
           region=ca-toronto-1
           key_file=~/.oci/oci_api_key.pem
           EOF
+
           chmod 600 ~/.oci/config
-          
-      - name: Install OCI CLI
-        run: |
-          curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh > install.sh
-          bash install.sh --accept-all-defaults
-          echo "$HOME/bin" >> $GITHUB_PATH
 
       - name: Build updatesType.json on runner
         run: |
           set -euo pipefail
-          # define payload (edit as needed)
           cat > /tmp/updatesType.json <<'JSON'
           {"windowsUpdateTypes":["ALL"]}
           JSON
           echo "/tmp/updatesType.json created:"
-          jq . /tmp/updatesType.json || cat /tmp/updatesType.json      
+          jq . /tmp/updatesType.json || cat /tmp/updatesType.json
+
+      - name: Apply updates to managed-instance-groups
+        env:
+          PROFILE: DEFAULT
+          TENANCY: ${{ inputs.tenancy }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f /tmp/updatesType.json ]; then
+            echo "ERROR: /tmp/updatesType.json not found." >&2
+            exit 1
+          fi
+
+          # iterate CSV: region,group_name,group_id
+          while IFS=',' read -r region group_name group_id; do
+            region=$(echo "$region" | sed -e 's/^"//' -e 's/"$//')
+            group_name=$(echo "$group_name" | sed -e 's/^"//' -e 's/"$//')
+            group_id=$(echo "$group_id" | sed -e 's/^"//' -e 's/"$//')
+
+            echo "Updating group: $group_name (id: $group_id) in region: $region"
+            oci os-management-hub managed-instance-group install-windows-updates \
+              --from-json file:///tmp/updatesType.json \
+              --group-id "$group_id" \
+              --profile "$PROFILE" \
+              --region "$region" \
+              || echo "Warning: install-windows-updates failed for $group_id"
+          done < /tmp/group_all.txt
