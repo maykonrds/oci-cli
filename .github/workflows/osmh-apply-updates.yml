@@ -66,7 +66,8 @@ jobs:
           TENANCY: ${{ inputs.tenancy }}
         run: |
           set -euo pipefail
-
+          GROUP_CSV="${GITHUB_WORKSPACE}/osmh/group_all.txt"
+          cp "$GROUP_CSV" /tmp/group_all.txt
           if [ ! -f /tmp/updatesType.json ]; then
             echo "ERROR: /tmp/updatesType.json not found." >&2
             exit 1
