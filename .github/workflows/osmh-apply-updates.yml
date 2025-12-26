@@ -4,12 +4,6 @@ run-name: "Apply Updates in ${{ inputs.tenancy }} for all Windows instances"
 
 on:
   workflow_dispatch:
-    inputs:
-      tenancy:
-        description: "Target tenancy name"
-        required: true
-        type: string
-
 # Minimal permissions needed for this workflow
 permissions:
   contents: read
