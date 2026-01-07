@@ -1,0 +1,94 @@
+name: NLB Drain Mode
+
+run-name: "NLB Drain Mode ${{ inputs.tenancy }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenancy:
+        description: 'Select tenancy to scan'
+        required: true
+        default: 'maykonrdsca'
+        type: choice
+        options:
+          - maykonrdsca
+          - maykonrdsca2
+      client:
+        description: 'Select client Compartment'
+        required: true
+        default: 'OracleTraining'
+        type: choice
+        options:
+          - OracleTraining
+          - clientA
+          - clientB
+  
+# Minimal permissions needed for this workflow
+permissions:
+  contents: read
+
+jobs:
+  list-windows-instances:
+    runs-on: ubuntu-latest
+    name: NLB Drain Mode in ${{ github.event.inputs.tenancy }} tenancy
+    env:
+      OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+      OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install jq (JSON processor)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+      - name: Set up OCI CLI
+        run: |
+          mkdir -p ~/.oci
+          echo "${OCI_CLI_KEY_CONTENT}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          
+          cat > ~/.oci/config <<EOF
+          [DEFAULT]
+          user=${OCI_CLI_USER}
+          fingerprint=${OCI_CLI_FINGERPRINT}
+          tenancy=${OCI_CLI_TENANCY}
+          region=us-ashburn-1
+          key_file=~/.oci/oci_api_key.pem
+          EOF
+          chmod 600 ~/.oci/config
+          
+      - name: Install OCI CLI
+        run: |
+          curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh > install.sh
+          bash install.sh --accept-all-defaults
+          echo "$HOME/bin" >> $GITHUB_PATH
+      - name: List Network Load Balancers
+        run: |
+          # Search for compartment recursively across all levels
+          echo "Searching for compartment '${{ inputs.client }}' in tenancy hierarchy..."
+          
+          # Use --all to search recursively through all compartments
+          COMPARTMENT_ID=$(oci iam compartment list \
+            --all \
+            --compartment-id-in-subtree true \
+            --query "data[?name=='${{ inputs.client }}'].id | [0]" \
+            --raw-output)
+          
+          if [ -z "$COMPARTMENT_ID" ] || [ "$COMPARTMENT_ID" = "null" ]; then
+            echo "Error: Could not find compartment with name '${{ inputs.client }}'" >&2
+            echo "Searching all compartments (this may take a moment)..." >&2
+            oci iam compartment list --all --compartment-id-in-subtree true --query "data[].{Name:name, ID:id}" --output table >&2 || true
+            exit 1
+          fi
+          
+          echo "Found compartment '${{ inputs.client }}' with ID: $COMPARTMENT_ID"
+          
+          # List network load balancers in the compartment
+          echo "Listing Network Load Balancers in compartment..."
+          oci nlb network-load-balancer list \
+            --compartment-id "$COMPARTMENT_ID" \
+            --query "data[].{Name:\"display-name\", ID:\"id\", State:\"lifecycle-state\"}" \
+            --output table
