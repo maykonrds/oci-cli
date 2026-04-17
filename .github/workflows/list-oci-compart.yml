@@ -1,0 +1,42 @@
+name: List OCI Compartments
+
+on:
+  workflow_dispatch:
+
+jobs:
+  list-compartments:
+    runs-on: ubuntu-latest
+    env:
+      OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+      OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install OCI CLI
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install oci-cli
+
+      - name: Configure OCI CLI Key File
+        run: |
+          echo "$OCI_CLI_KEY_CONTENT" > oci_api_key.pem
+          chmod 600 oci_api_key.pem
+
+      - name: List Compartments
+        env:
+          OCI_CLI_KEY_FILE: ${{ github.workspace }}/oci_api_key.pem
+        run: |
+          oci setup config --config-file oci_config --profile DEFAULT <<EOF
+          $OCI_CLI_USER
+          $OCI_CLI_TENANCY
+          $OCI_CLI_FINGERPRINT
+          $OCI_CLI_KEY_FILE
+          EOF
+
+          oci iam compartment list --config-file oci_config --profile DEFAULT
+
+      - name: Cleanup
+        run: rm -f oci_api_key.pem oci_config
