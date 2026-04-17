@@ -1,4 +1,4 @@
-name: List OCI Compartments
+name: List Compartments
 
 on:
   workflow_dispatch:
@@ -11,31 +11,32 @@ jobs:
       OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
       OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
       OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
+      OCI_CLI_REGION: ca-toronto-1 # or use secrets if preferred
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install OCI CLI
-        run: |
-          python3 -m pip install --upgrade pip
-          pip3 install oci-cli
+        run: pip install oci-cli
 
-      - name: Configure OCI CLI Key File
+      - name: Write private API key file
         run: |
           echo "$OCI_CLI_KEY_CONTENT" > oci_api_key.pem
           chmod 600 oci_api_key.pem
 
-      - name: List Compartments
-        env:
-          OCI_CLI_KEY_FILE: ${{ github.workspace }}/oci_api_key.pem
+      - name: Write OCI config file
         run: |
-          oci setup config --config-file oci_config --profile DEFAULT <<EOF
-          $OCI_CLI_USER
-          $OCI_CLI_TENANCY
-          $OCI_CLI_FINGERPRINT
-          $OCI_CLI_KEY_FILE
+          cat > oci_config <<EOF
+          [DEFAULT]
+          user=$OCI_CLI_USER
+          fingerprint=$OCI_CLI_FINGERPRINT
+          key_file=oci_api_key.pem
+          tenancy=$OCI_CLI_TENANCY
+          region=$OCI_CLI_REGION
           EOF
 
+      - name: List compartments
+        run: |
           oci iam compartment list --config-file oci_config --profile DEFAULT
 
       - name: Cleanup
